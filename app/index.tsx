@@ -1,16 +1,4 @@
 import React, { useState, useEffect } from "react";
-
-// const App: React.FC = () => {
-//   const [deliveryEstimate, setDeliveryEstimate] = useState<string>("");
-
-//   useFocusEffect(
-//     React.useCallback(() => {
-//       // Clear delivery estimate each time the screen is focused
-//       setDeliveryEstimate("");
-//     }, [])
-//   );
-
-
 import {
   View,
   Text,
@@ -31,21 +19,23 @@ const App: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [pincode, setPincode] = useState<string>("");
   const [deliveryEstimate, setDeliveryEstimate] = useState<string>("");
+  const [estimatedDeliveryDate, setEstimatedDeliveryDate] = useState<Date | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
-
-//   const [deliveryEstimate, setDeliveryEstimate] = useState<string>("");
+  const [remainingTime, setRemainingTime] = useState<number>(0); // State for remaining time
+  const [deliveryMessage, setDeliveryMessage] = useState<string>("");
+//   let deliveryMessage: string;
 
   useFocusEffect(
     React.useCallback(() => {
-      // Clear delivery estimate each time the screen is focused
       setDeliveryEstimate("");
       setErrorMessage("");
       setPincode("");
+      setEstimatedDeliveryDate(null);
+      setRemainingTime(0); // Reset remaining time
     }, [])
   );
 
-  // Load CSV files on mount
   useEffect(() => {
     Promise.all([
       loadCSV("/Pincodes.csv", setPincodeData),
@@ -54,7 +44,17 @@ const App: React.FC = () => {
     ]).then(() => setLoading(false));
   }, []);
 
-  // Helper function to load CSV and parse it
+  useEffect(() => {
+    // Set up the interval to update remaining time every second
+    const interval = setInterval(() => {
+      if (remainingTime > 0) {
+        setRemainingTime((prev) => prev - 1);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval); // Cleanup the interval on unmount
+  }, [remainingTime]);
+
   const loadCSV = async (filePath: string, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
     try {
       const response = await fetch(filePath);
@@ -63,23 +63,20 @@ const App: React.FC = () => {
       setter(parsedData);
     } catch (error) {
       console.error(`Failed to load ${filePath}:`, error);
-      setter([]); // Set to an empty array on failure
+      setter([]);
     }
   };
 
-  // Get delivery provider and TAT based on the entered pincode
   const getProviderAndTAT = (pincode: string) => {
     const entry = pincodeData.find((item) => item.Pincode === pincode);
     return entry || { "Logistics Provider": "N/A", TAT: "N/A" };
   };
 
-  // Check stock availability of the selected product
   const checkStock = (productId: string) => {
     const stock = stockData.find((item) => item["Product ID"] === productId);
-    return stock ? stock["Stock Available"] : "0"; // Ensure stock is a number
+    return stock ? stock["Stock Available"] : "0";
   };
 
-  // Handle changes to the pincode input
   const handlePincodeChange = (input: string) => {
     if (/^\d*$/.test(input)) {
       setPincode(input);
@@ -88,7 +85,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Calculate the delivery date based on current date and estimated days
   const calculateDeliveryDate = (estimatedDays: number): string => {
     const deliveryDate = new Date();
     deliveryDate.setDate(deliveryDate.getDate() + estimatedDays);
@@ -97,7 +93,34 @@ const App: React.FC = () => {
     return deliveryDate.toLocaleDateString(undefined, options);
   };
 
-  // Check delivery availability and estimate based on pincode
+  const calculateTargetDeliveryTime = (provider: string): Date => {
+    const now = new Date();
+    const targetTime = new Date();
+
+    if (provider === "Provider A") {
+      // Provider A: 5 PM
+      targetTime.setHours(17, 0, 0, 0); // Set to 5 PM
+      if (now.getTime() >= targetTime.getTime()) {
+        // If it's past 5 PM, set to tomorrow
+        targetTime.setDate(targetTime.getDate() + 1);
+      }
+    } else if (provider === "Provider B") {
+      // Provider B: 9 AM
+      targetTime.setHours(9, 0, 0, 0); // Set to 9 AM
+      if (now.getTime() >= targetTime.getTime()) {
+        // If it's past 9 AM, set to tomorrow
+        targetTime.setDate(targetTime.getDate() + 1);
+      }
+    } else {
+        targetTime.setHours(24, 0, 0, 0); // Set to 9 AM
+         
+        // If it's past 9 AM, set to tomorrow
+        targetTime.setDate(targetTime.getDate());
+
+    }
+    return targetTime;
+  };
+
   const checkDelivery = () => {
     if (pincode.length !== 6) {
       setErrorMessage("Please enter a valid 6-digit pincode.");
@@ -112,52 +135,71 @@ const App: React.FC = () => {
       return;
     }
 
-    const now = new Date();
     let estimate = "";
+    const isProductInStock = checkStock(selectedProduct["Product ID"]) === "True";
 
-    // Check stock for the selected product
-    const isProductInStock = checkStock(selectedProduct["Product ID"]);
+    if (isProductInStock) {
+      const targetDeliveryTime = calculateTargetDeliveryTime(providerInfo["Logistics Provider"]);
+      setEstimatedDeliveryDate(targetDeliveryTime);
 
-    if (isProductInStock == "True") {
+      const now = new Date();
+      const remainingTimeInSeconds = Math.floor((targetDeliveryTime.getTime() - now.getTime()) / 1000); // Convert milliseconds to seconds
+      setRemainingTime(remainingTimeInSeconds); // Set the remaining time
+
       let estimatedDays = Number(providerInfo.TAT);
-      let deliveryMessage: string;
+    //   let deliveryMessage: string;
 
       if (providerInfo["Logistics Provider"] === "Provider A") {
         if (now.getHours() < 17) {
-            deliveryMessage=calculateDeliveryDate(estimatedDays);
-        //   deliveryMessage = `Same-Day Delivery (if ordered by 5 PM)`;
+            const deliveryMsg = calculateDeliveryDate(estimatedDays);
+            setDeliveryMessage(` ${deliveryMsg}`);
+            // deliveryMessage=calculateDeliveryDate(estimatedDays);
+        //   deliveryMessage = Same-Day Delivery (if ordered by 5 PM);
         } else {
             estimatedDays++;
-            deliveryMessage=calculateDeliveryDate(estimatedDays);
-        //   deliveryMessage = `Delivery within ${estimatedDays + 1} days.`;
+            const deliveryMsg = calculateDeliveryDate(estimatedDays);
+            setDeliveryMessage(` ${deliveryMsg}`);
+            // deliveryMessage=calculateDeliveryDate(estimatedDays);
+        //   deliveryMessage = Delivery within ${estimatedDays + 1} days.;
         }
       } else if (providerInfo["Logistics Provider"] === "Provider B") {
         if (now.getHours() < 9) {
-            deliveryMessage=calculateDeliveryDate(estimatedDays);
-        //   deliveryMessage = `Same-Day Delivery (if ordered by 9 AM)`;
+            const deliveryMsg = calculateDeliveryDate(estimatedDays);
+            setDeliveryMessage(` ${deliveryMsg}`);
+            // deliveryMessage=calculateDeliveryDate(estimatedDays);
+        //   deliveryMessage = Same-Day Delivery (if ordered by 9 AM);
         } else {
             estimatedDays++;
-            deliveryMessage=calculateDeliveryDate(estimatedDays);
-        //   deliveryMessage = `Delivery within ${estimatedDays + 1} days.`;
+            const deliveryMsg = calculateDeliveryDate(estimatedDays);
+            setDeliveryMessage(` ${deliveryMsg}`);
+            // deliveryMessage=calculateDeliveryDate(estimatedDays);
+        //   deliveryMessage = Delivery within ${estimatedDays + 1} days.;
         }
       } else {
-        deliveryMessage=calculateDeliveryDate(estimatedDays);
-        // deliveryMessage = `Delivery within ${estimatedDays} days.`;
+            const deliveryMsg = calculateDeliveryDate(estimatedDays);
+            setDeliveryMessage(` ${deliveryMsg}`);
+        // deliveryMessage=calculateDeliveryDate(estimatedDays);
+        // deliveryMessage = Delivery within ${estimatedDays} days.;
       }
 
-      // Calculate delivery date
-    //   const deliveryDateString = calculateDeliveryDate(
-    //     deliveryMessage.includes('Same-Day') ? 0 : estimatedDays + (providerInfo["Logistics Provider"] === "Provider A" && now.getHours() >= 17 ? 1 : 0)
-    //   );
-
-      estimate = ` Estimated Delivery Date: ${deliveryMessage}.`;
-      
+    //   estimate = `Estimated Delivery Date: ${deliveryMessage}`;
     } else {
       estimate = "Out of stock";
     }
 
     setErrorMessage("");
     setDeliveryEstimate(estimate);
+  };
+
+  // Function to format the remaining time
+  const formatRemainingTime = (seconds: number): string => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    // const deliveryDay = estimatedDeliveryDate?.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+    return seconds > 0
+      ? `Order within ${hours} hrs ${minutes} mins to get it by ${deliveryMessage}`
+      : `Order within ${hours} hrs ${minutes} mins to get it by ${deliveryMessage}`;
   };
 
   if (loading) {
@@ -172,50 +214,58 @@ const App: React.FC = () => {
   return (
     <View style={styles.container}>
       {selectedProduct ? (
-    <View style={styles.productDetailsContainer}>
-        <View style={styles.productDetails}>
-          <Text style={styles.productName}>
-            {selectedProduct["Product Name"] || "Unknown Product"}
-          </Text>
-          <Text>Price: ₹{selectedProduct.Price || "N/A"}</Text>
+        <View style={styles.productDetailsContainer}>
+          <View style={styles.productDetails}>
+            <Text style={styles.productName}>
+              {selectedProduct["Product Name"] || "Unknown Product"}
+            </Text>
+            <Text>Price: ₹{selectedProduct.Price || "N/A"}</Text>
 
-          <Text>Stock: {checkStock(selectedProduct["Product ID"])}</Text>
-          {checkStock(selectedProduct["Product ID"]) == "True" ? (
-    <Text>Stock Available</Text>
-) : (
-    <Text>Out of Stock</Text>
-)}
+            <Text>Stock: {checkStock(selectedProduct["Product ID"])}</Text>
+            {checkStock(selectedProduct["Product ID"]) === "True" ? (
+              <Text>Stock Available</Text>
+            ) : (
+              <Text>Out of Stock</Text>
+            )}
 
-          <TextInput
-            placeholder="Enter Pincode"
-            value={pincode}
-            onChangeText={handlePincodeChange}
-            keyboardType="numeric"
-            maxLength={6}
-            style={styles.input}
-          />
-          {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+            <TextInput
+              placeholder="Enter Pincode"
+              value={pincode}
+              onChangeText={handlePincodeChange}
+              keyboardType="numeric"
+              maxLength={6}
+              style={styles.input}
+            />
+            {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
-          <Button title="Check Delivery" onPress={checkDelivery} />
+            <Button title="Check Delivery" onPress={checkDelivery} />
 
-          {deliveryEstimate && (
-            <Text style={styles.estimate}>{deliveryEstimate}</Text>
-          )}
-        </View>
+            {deliveryEstimate && (
+              <Text style={styles.estimate}>{deliveryEstimate}</Text>
+            )}
 
+            {/* Display remaining time until delivery */}
+            {estimatedDeliveryDate && (
+              <Text style={styles.remainingTime}>
+                {formatRemainingTime(remainingTime)}
+              </Text>         
+            )}
+          </View>
 
-        <View style={styles.backButtonContainer}>
-          <Button
-            title="Back to Products"
-            onPress={() => {
+          <View style={styles.backButtonContainer}>
+            <Button
+              title="Back to Products"
+              onPress={() => {
                 setSelectedProduct(null);
                 setDeliveryEstimate("");
                 setErrorMessage("");
-            }}
-          />
+                // setPincode("");
+                setEstimatedDeliveryDate(null);
+                setRemainingTime(0); // Reset remaining time
+              }}
+            />
+          </View>
         </View>
-    </View>
-        
       ) : (
         <FlatList
           data={products}
@@ -237,52 +287,53 @@ const App: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: "#fff",
-  },
-  product: {
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ddd",
-  },
-  productDetailsContainer: {
-    flex: 1,
-    justifyContent: "space-between",
-  },
-  productDetails: {
-    padding: 20,
-  },
-  productName: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
-  input: {
-    height: 40,
-    borderColor: "gray",
-    borderWidth: 1,
-    marginBottom: 10,
-    paddingHorizontal: 10,
-  },
-  error: {
-    color: "red",
-    marginBottom: 10,
-  },
-  estimate: {
-    marginVertical: 10,
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
- backButtonContainer: {
-    paddingBottom: 20,
- },
-});
-
-export default App;
+    container: {
+      flex: 1,
+      padding: 20,
+      backgroundColor: "#fff",
+    },
+    product: {
+      padding: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: "#ddd",
+    },
+    productDetailsContainer: {
+      flex: 1,
+      justifyContent: "space-between",
+    },
+    productDetails: {
+      padding: 20,
+    },
+    productName: {
+      fontSize: 24,
+      fontWeight: "bold",
+      marginBottom: 10,
+    },
+    input: {
+      height: 40,
+      borderColor: "gray",
+      borderWidth: 1,
+      marginBottom: 10,
+      paddingHorizontal: 10,
+    },
+    error: {
+      color: "red",
+      marginBottom: 10,
+    },
+    estimate: {
+      marginVertical: 10,
+      fontSize: 16,
+      fontWeight: "bold",
+    },
+    center: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+   backButtonContainer: {
+      paddingBottom: 20,
+   },
+  });
+  
+  export default App;
+  
